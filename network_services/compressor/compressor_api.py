@@ -10,7 +10,7 @@ import logging
 app = FastAPI()
 logging.basicConfig(level=logging.INFO)
 
-DECOMPRESSOR_URL = "http://192.168.0.122:8000/process"  # Use service name in Kubernetes
+DECOMPRESSOR_URL = "http://grayscaler-service:8012/process" 
 
 @app.post("/upload")
 async def receive_image(file: UploadFile = File(...)):
