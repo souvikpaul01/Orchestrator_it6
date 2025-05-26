@@ -1,0 +1,21 @@
+replicaCount: 1
+
+image:
+  repository: docker.io/library/grayscaler
+  tag: offline
+  pullPolicy: Never
+
+service:
+  type: NodePort
+  port: 8000
+  nodePort: 30002  # Grayscaler
+
+resources: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+namespace:
+  name: it6-ns
+  app: grayscaler

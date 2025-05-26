@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: compressor
+  namespace: it6-ns
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: compressor
+  template:
+    metadata:
+      labels:
+        app: compressor
+    spec:
+      containers:
+      - name: compressor
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - containerPort: 8000
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"

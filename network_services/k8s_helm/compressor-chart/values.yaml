@@ -1,0 +1,26 @@
+replicaCount: 1
+
+image:
+  repository: docker.io/library/compressor  
+  tag: offline
+  pullPolicy: Never
+
+service:
+  type: NodePort
+  port: 8000
+  nodePort: 30080 
+
+resources: {}
+
+
+
+tolerations:
+  - key: "node-role.kubernetes.io/control-plane"
+    operator: "Exists"
+    effect: "NoSchedule"
+
+affinity: {}
+
+namespace:
+  name: it6-ns
+  app: compressor
