@@ -1,6 +1,6 @@
 apiVersion: v2
 name: grayscaler
-description: A FastAPI service to decompress and process images
+description: A FastAPI service to decompress and grayscale images
 type: application
 version: 0.1.0
 appVersion: "1.0"
