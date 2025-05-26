@@ -6,9 +6,8 @@ image:
   pullPolicy: Never
 
 service:
-  type: NodePort
-  port: 8000
-  nodePort: 30002  # Grayscaler
+  type: ClusterIP
+  port: 8012
 
 resources: {}
 
