@@ -37,5 +37,5 @@ sudo docker build -t compressor:offline .
 sudo docker save compressor:offline -o compressor.tar
 sudo ctr -n k8s.io images import compressor.tar
 sudo ctr -n k8s.io images ls | grep compressor
- 
 
+---
