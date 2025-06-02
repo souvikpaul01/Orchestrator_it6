@@ -9,7 +9,10 @@ service:
   type: ClusterIP
   port: 8012
 
-resources: {}
+resources:
+  limits:
+    cpu: 100
+    memory: 256
 
 nodeSelector: {}
 tolerations: []
