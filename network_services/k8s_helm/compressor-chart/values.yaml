@@ -10,9 +10,10 @@ service:
   port: 8000
   nodePort: 30080 
 
-resources: {}
-
-
+resources:
+  limits:
+    cpu: 100
+    memory: 256
 
 tolerations:
   - key: "node-role.kubernetes.io/control-plane"
