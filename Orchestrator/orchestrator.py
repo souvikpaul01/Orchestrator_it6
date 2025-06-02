@@ -1,17 +1,53 @@
 # app/orchestrator.py
 import os
-import zipfile
 import tarfile
+import zipfile
 import tempfile
 import subprocess
-from datetime import datetime
+import yaml
+import numpy as np
+import pandas as pd
+import joblib
 from flask import Flask, request, jsonify, render_template_string
+from datetime import datetime
 import requests
 
 app = Flask(__name__)
 
+# Load ML Model and Preprocessor
+OCSVM_MODEL_PATH = "ocsvm_model.pkl"
+PREPROCESSOR_PATH = "preprocessor.pkl"
+ocsvm = joblib.load(OCSVM_MODEL_PATH)
+preprocessor = joblib.load(PREPROCESSOR_PATH)
+
 def log(msg):
     print(f"[{datetime.now().isoformat()}] {msg}")
+
+# Preprocessing Function
+def preprocess_values(values):
+    """
+    Extracts relevant values and returns a DataFrame suitable for prediction.
+    Assumes no top-level component key; infers type from namespace.app
+    """
+    try:
+        component_name = values.get("namespace", {}).get("app", "").upper()
+        if component_name not in ["COMPRESSOR", "GRAYSCALER"]:
+            raise ValueError(f"Unknown component type: '{component_name}'")
+
+        replica_count = values.get("replicaCount", 0)
+        cpu_limit = values.get("resources", {}).get("limits", {}).get("cpu", 0)
+        memory_limit = values.get("resources", {}).get("limits", {}).get("memory", 0)
+
+        return pd.DataFrame([{
+            "replica_count": replica_count,
+            "cpu_limit": int(cpu_limit),
+            "memory_limit": int(memory_limit),
+            "network_function": component_name
+        }])
+
+    except Exception as e:
+        raise ValueError(f"Error preprocessing values.yaml: {e}")
+
 
 def extract_archive(archive_path, extract_to):
     if archive_path.endswith('.zip'):
@@ -25,7 +61,7 @@ def extract_archive(archive_path, extract_to):
 
 # Function to get the bearer token
 def get_bearer_token():
-    url = 'http://ip:8080/auth/realms/opademo/protocol/openid-connect/token'
+    url = 'http://localhost:8080/auth/realms/opademo/protocol/openid-connect/token'
     headers = {'Content-Type': 'application/x-www-form-urlencoded'}
     data = {
         'client_id': 'lcl',
@@ -89,7 +125,13 @@ def delete_tunnel(bearer_token, tunnel_id):
 
 @app.route('/')
 def index():
-    return render_template_string(open(os.path.join(os.path.dirname(__file__), "app/ui.html")).read())
+    return render_template_string("""
+        <h2>Helm Chart Deployment Interface</h2>
+        <form action="/deploy" method="post" enctype="multipart/form-data">
+            <input type="file" name="archive">
+            <input type="submit" value="Deploy">
+        </form>
+    """)
 
 @app.route('/deploy', methods=['POST'])
 def deploy_charts():
@@ -100,19 +142,28 @@ def deploy_charts():
     log(f"Received archive: {archive_file.filename}")
 
     # # Step 1: Get Bearer Token
-    # token = get_bearer_token()
-    # if not token:
-    #     return jsonify({'error': 'Failed to retrieve bearer token'}), 500
-    # log("Bearer token retrieved successfully.")
+    # token = None
+    # try:
+    #     token = get_bearer_token()
+    #     if not token:
+    #         log("Error: Failed to retrieve bearer token.")
+    #         return jsonify({'error': 'Failed to retrieve bearer token'}), 500
+    #     log("Bearer token retrieved successfully.")
+    # except Exception as e:
+    #     log(f"Exception during token retrieval: {str(e)}")
+    #     return jsonify({'error': f'Exception during token retrieval: {str(e)}'}), 500
 
     # # Step 2: Establish Tunnel
     # try:
-    #     establish_tunnel(token)
-    #     log("Tunnel established successfully.")
+    #     tunnel_id = establish_tunnel(token)
+    #     if not tunnel_id:
+    #         log("Error: Failed to establish tunnel.")
+    #         return jsonify({'error': 'Failed to establish tunnel'}), 500
+    #     log(f"Tunnel established successfully. ID: {tunnel_id}")
     # except Exception as e:
-    #     return jsonify({'error': f'Failed to establish tunnel: {str(e)}'}), 500
+    #     log(f"Exception during tunnel setup: {str(e)}")
+    #     return jsonify({'error': f'Exception during tunnel setup: {str(e)}'}), 500
 
-    # Step 3: Only continue if both previous steps succeeded
     results = []
     with tempfile.TemporaryDirectory() as tmpdir:
         archive_path = os.path.join(tmpdir, archive_file.filename)
@@ -123,23 +174,46 @@ def deploy_charts():
             log(f"Archive extracted to {tmpdir}")
         except Exception as e:
             return jsonify({'error': f'Failed to extract archive: {str(e)}'}), 500
+        
+        for root, dirs, files in os.walk(tmpdir):
+            for name in files:
+                if name == "values.yaml":
+                    try:
+                        with open(os.path.join(root, name), 'r') as f:
+                            values = yaml.safe_load(f)
 
-        for item in os.listdir(tmpdir):
-            chart_path = os.path.join(tmpdir, item)
-            if os.path.isdir(chart_path) and os.path.exists(os.path.join(chart_path, 'Chart.yaml')):
-                release_name = item
-                try:
-                    result = subprocess.run(
-                        ["helm", "upgrade", "--install", release_name, chart_path, "--set", "image.pullPolicy=Never"],
-                        check=True,
-                        capture_output=True,
-                        text=True
-                    )
-                    log(f"Deployed chart: {release_name}")
-                    results.append({'chart': release_name, 'status': 'deployed', 'log': result.stdout})
-                except subprocess.CalledProcessError as e:
-                    log(f"Error deploying chart {release_name}: {e.stderr}")
-                    results.append({'chart': release_name, 'status': 'error', 'log': e.stderr})
+                        test_data = preprocess_values(values)
+                        test_data_preprocessed = preprocessor.transform(test_data)
+                        predictions = ocsvm.predict(test_data_preprocessed)
+                        
+                        predicted_labels = np.where(predictions == 1, 1, 0)
+                        #test_data['predicted_label'] = np.where(predictions == 1, 1, 0)
+
+                        results.append({
+                            'chart_path': root,
+                            'predictions': test_data.to_dict(orient='records')
+                        })
+                    
+                        if np.any(predicted_labels == 0):
+                            log(f"Skipping deployment of chart at {root} due to predicted label 0.")
+                            results.append({'chart': root, 'status': 'skipped due to predicted label 0'})
+                            continue
+                        
+                        release_name = os.path.basename(root)
+                        if os.path.exists(os.path.join(root, 'Chart.yaml')):
+                            result = subprocess.run(
+                                ["helm", "upgrade", "--install", release_name, root, "--set", "image.pullPolicy=Never"],
+                                check=True,
+                                capture_output=True,
+                                text=True
+                            )
+                            log(f"Deployed chart: {release_name}")
+                            results.append({'chart': release_name, 'status': 'deployed', 'log': result.stdout})
+
+                    except Exception as e:
+                        log(f"Error during prediction or deployment: {str(e)}")
+                        results.append({'error': str(e), 'chart_path': root})
+        
 
     return jsonify({'deployments': results}), 200
 
@@ -182,4 +256,4 @@ def status_chart():
 
 if __name__ == '__main__':
     log("Orchestrator started")
-    app.run(host='0.0.0.0', port=8090)
+    app.run(host='0.0.0.0', port=8000)
